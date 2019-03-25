@@ -1,1 +1,81 @@
+setwd("/data8t/sunhao/xiehe/test_scRNA_downstream")
+suppressMessages(require("Seurat"))
+suppressMessages(require("dplyr"))
+suppressMessages(require("Matrix"))
+suppressMessages(require("reshape2"))
+LogNorm <- function(data, scale_factor, display_progress = TRUE) {                                                                                                                                             
+  .Call('_Seurat_LogNorm', PACKAGE = 'Seurat', data, scale_factor, display_progress)
+}
 
+LogNormalize <- function(data, scale.factor = 1e4 ) {
+  if (class(x = data) == "data.frame") {
+    data <- as.matrix(x = data)
+  }
+  if (class(x = data) != "dgCMatrix") {
+    data <- as(object = data, Class = "dgCMatrix")
+  }
+   
+  norm.data <- LogNorm(data, scale_factor = scale.factor)
+  colnames(x = norm.data) <- colnames(x = data)
+  rownames(x = norm.data) <- rownames(x = data)
+  return(norm.data)
+}
+normlized_fix<-function (x,y){
+normalized.data <- LogNormalize(                                                                                                                                                                          
+    data = x@raw.data,
+    scale.factor = y
+  )
+ x<- SetAssayData(
+    object = x,
+     assay.type = "RNA",
+     slot = "data",
+    new.data = normalized.data
+   )
+   return(x)
+}
+mytb<-read.table("HSMM_expr_matrix.txt",sep="\t",header=T,row.names=1,stringsAsFactors=F)
+mxx <- CreateSeuratObject(raw.data = mytb, min.cells = 3, min.genes = 200, 
+                          project = "10X_PBMC",save.raw =T)
+mito.genes <- grep(pattern = "^MT-", x = rownames(x = mxx@data), value = TRUE)
+percent.mito <- Matrix::colSums(mxx@raw.data[mito.genes, ]) / Matrix::colSums(mxx@raw.data)
+mxx <- AddMetaData(object = mxx, metadata = percent.mito, col.name = "percent.mito")
+pdf("/home/bianhaiyang/refer_to_learn.pdf")
+VlnPlot(object = mxx, features.plot = c("nGene", "nUMI", "percent.mito"), nCol = 3)
+par(mfrow = c(1, 2))
+GenePlot(object = mxx, gene1 = "nUMI", gene2 = "percent.mito")
+GenePlot(object = mxx, gene1 = "nUMI", gene2 = "nGene")
+mxx <- FilterCells(object = mxx, subset.names =
+                     c("nGene", "percent.mito"), low.thresholds = c(200, -Inf), 
+                   high.thresholds = c(2500, 1))
+mxx<-normlized_fix(mxx,10000)
+mxx <- FindVariableGenes(mxx,mean.function = ExpMean, dispersion.function = LogVMR, x.low.cutoff = 0.0125, x.high.cutoff = 3, y.cutoff = 0.5)
+mxx <- ScaleData(mxx, vars.to.regress = c("nUMI", "percent.mito"))
+disnm<-ncol(mxx@data)-1
+mxx <- RunPCA(mxx,pc.genes = mxx@var.genes, do.print = F,pcs.compute=disnm)
+length(x = mxx@var.genes)
+VizPCA(object = mxx, pcs.use = 1:2)
+PCAPlot(object = mxx, dim.1 = 1, dim.2 = 2)
+PCHeatmap(object = mxx, pc.use = 1:15, cells.use = disnm, do.balanced = TRUE, label.columns = FALSE, use.full = FALSE)
+mxx <- JackStraw(object = mxx, num.replicate = 100) 
+JackStrawPlot(object = mxx, PCs = 1:5)
+PCElbowPlot(object = mxx)
+mxx <- FindClusters(object = mxx, reduction.type = "pca", dims.use = 1:3, resolution = 0.6, print.output = 0, save.SNN = TRUE)
+mxx <- RunTSNE(object = mxx, reduction.use = "pca",dims.use = 1:3, do.fast = TRUE)
+TSNEPlot(object = mxx)
+mxx.markers <- FindAllMarkers(object = mxx, only.pos = TRUE, min.pct = 0.25, thresh.use = 0.25)
+mxx.markers %>% group_by(cluster) %>% top_n(2, avg_logFC)
+mxx.markers %>% group_by(cluster) %>% top_n(10, avg_logFC) -> top10
+DoHeatmap(object =mxx, genes.use = top10$gene, slim.col.label = TRUE, remove.key = TRUE) 
+for(i in 1:3){
+  x=1+10*(i-1)
+  y=i*10
+FeaturePlot(object = mxx, features.plot =  top10$gene[x:y], cols.use = c("grey", "blue"), reduction.use = "tsne")
+
+}
+al<-VlnPlot(object = mxx, features.plot = top10$gene[1:10], use.raw = TRUE, y.log = TRUE) 
+print(al)
+ac<-VlnPlot(object = mxx, features.plot = top10$gene[11:20], use.raw = TRUE, y.log = TRUE) 
+print(ac)
+ad<-VlnPlot(object = mxx, features.plot = top10$gene[21:30], use.raw = TRUE, y.log = TRUE) 
+print(ad)
+dev.off()
